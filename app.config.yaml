@@ -14,3 +14,25 @@ application:
             annotations:
               require-adobe-auth: false
               final: true
+          learner-context:
+            function: actions/learner-context/index.js
+            web: 'no'
+            runtime: nodejs:22
+            inputs:
+              LOG_LEVEL: debug
+              PL_API_BASE: $PL_API_BASE
+              PL_API_KEY: $PL_API_KEY
+            annotations:
+              require-adobe-auth: false
+              final: true
+          retrieval:
+            function: actions/retrieval/index.js
+            web: 'no'
+            runtime: nodejs:22
+            inputs:
+              LOG_LEVEL: debug
+              PL_API_BASE: $PL_API_BASE
+              PL_API_KEY: $PL_API_KEY
+            annotations:
+              require-adobe-auth: false
+              final: true

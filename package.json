@@ -7,6 +7,7 @@
     "@adobe/generator-app-events-generic": "^2.0.1"
   },
   "devDependencies": {
+    "dotenv": "^16.3.1",
     "eslint": "^8",
     "eslint-plugin-jest": "^27.2.3",
     "jest": "^29",
@@ -17,6 +18,9 @@
     "test": "jest --passWithNoTests ./test",
     "e2e": "jest --collectCoverage=false --testRegex ./e2e",
     "lint": "eslint --ignore-pattern web-src --no-error-on-unmatched-pattern test src actions",
-    "lint:fix": "npm run lint -- --fix"
+    "lint:fix": "npm run lint -- --fix",
+    "check:learner-context": "node scripts/live-learner-context-check.js",
+    "check:api": "node scripts/live-api-check.js",
+    "check:retrieval": "node scripts/live-retrieval-check.js"
   }
 }
