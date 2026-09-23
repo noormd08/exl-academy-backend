@@ -21,6 +21,7 @@
     "lint:fix": "npm run lint -- --fix",
     "check:learner-context": "node scripts/live-learner-context-check.js",
     "check:api": "node scripts/live-api-check.js",
-    "check:retrieval": "node scripts/live-retrieval-check.js"
+    "check:retrieval": "node scripts/live-retrieval-check.js",
+    "check:compose-plan": "node scripts/live-compose-plan-check.js"
   }
 }

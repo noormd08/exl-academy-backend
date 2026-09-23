@@ -36,3 +36,15 @@ application:
             annotations:
               require-adobe-auth: false
               final: true
+          compose-plan:
+            function: actions/compose-plan/index.js
+            web: 'yes'
+            runtime: nodejs:22
+            inputs:
+              LOG_LEVEL: debug
+              PL_API_BASE: $PL_API_BASE
+              PL_API_KEY: $PL_API_KEY
+              CORS_ORIGIN: $CORS_ORIGIN
+            annotations:
+              require-adobe-auth: false
+              final: true
