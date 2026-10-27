@@ -72,6 +72,23 @@ describe('compose-plan endpoint', () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
+  it('SKIP_IMS_AUTH=true bypasses the IMS gate entirely (dev-only)', async () => {
+    global.fetch = mockFetchRouter(HAPPY_ROUTES)
+
+    const result = await main(params({ __ow_headers: {}, SKIP_IMS_AUTH: true })) // no auth header at all
+
+    expect(result.statusCode).toBe(200)
+    expect(result.body.meta.mode).toBe('continue')
+    // IMS was never called — only ALM routes were hit.
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('ims-na1.adobelogin.com'), expect.anything())
+  })
+
+  it('SKIP_IMS_AUTH is off by default — a request with no token still 401s', async () => {
+    global.fetch = jest.fn()
+    const result = await main(params({ __ow_headers: {}, SKIP_IMS_AUTH: undefined }))
+    expect(result.statusCode).toBe(401)
+  })
+
   it('pipeline failure after auth -> 200 safe default (pl-todays-plan shown, others hidden, no blocksData)', async () => {
     global.fetch = mockFetchRouter([
       ['ims-na1.adobelogin.com', { userId: 'ims-u' }],

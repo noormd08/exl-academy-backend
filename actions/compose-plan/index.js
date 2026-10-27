@@ -54,17 +54,28 @@ async function main (params) {
   }
 
   // Auth: validate the IMS token exactly as learner-context does (401 missing/invalid, 502 unreachable).
+  //
+  // DEV-ONLY BYPASS: set SKIP_IMS_AUTH=true to skip this gate while a real IMS token isn't available
+  // (e.g. quick demos against the deployed Dev endpoint). Never set this in a real deployment — it
+  // removes golden rule #3 (validate the learner server-side) entirely. `userId` is a placeholder in
+  // this path; it's unused downstream anyway (see api.js — ALM data is scoped by PL_API_KEY, not by
+  // this id, per the current single-account limitation in CONTEXT.md).
   let userId
-  try {
-    const profile = await validateImsToken(extractBearerToken(params.__ow_headers || {}))
-    userId = profile.userId
-  } catch (err) {
-    if (err instanceof ImsError && err.kind === 'unreachable') {
-      logger.error(`IMS unreachable: ${err.message}`)
-      return { statusCode: 502, headers, body: { error: 'IMS profile service unreachable' } }
+  if (params.SKIP_IMS_AUTH === true || params.SKIP_IMS_AUTH === 'true') {
+    logger.info('SKIP_IMS_AUTH is set — bypassing IMS validation (dev-only)')
+    userId = 'skip-ims-auth-dev-bypass'
+  } else {
+    try {
+      const profile = await validateImsToken(extractBearerToken(params.__ow_headers || {}))
+      userId = profile.userId
+    } catch (err) {
+      if (err instanceof ImsError && err.kind === 'unreachable') {
+        logger.error(`IMS unreachable: ${err.message}`)
+        return { statusCode: 502, headers, body: { error: 'IMS profile service unreachable' } }
+      }
+      logger.info(`IMS auth rejected: ${err.message}`)
+      return { statusCode: 401, headers, body: { error: 'Missing or invalid IMS access token' } }
     }
-    logger.info(`IMS auth rejected: ${err.message}`)
-    return { statusCode: 401, headers, body: { error: 'Missing or invalid IMS access token' } }
   }
 
   // Data pipeline: any failure here degrades to the safe default (page always renders).
