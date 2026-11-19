@@ -11,97 +11,60 @@ governing permissions and limitations under the License.
 
 const { main } = require('../actions/compose-plan')
 
-// Routes checked in order; put more specific substrings before general ones ('/user' matches '/users/...').
-function mockFetchRouter (routes) {
-  return jest.fn((url) => {
-    const match = routes.find(([pattern]) => url.includes(pattern))
-    if (!match) throw new Error(`Unexpected fetch: ${url}`)
-    const [, body, status = 200] = match
-    return Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body })
-  })
-}
-
-const HAPPY_ROUTES = [
-  ['ims-na1.adobelogin.com', { userId: 'ims-u' }],
-  ['userBadges', { data: [], included: [] }],
-  ['userSkills', { data: [], included: [] }],
-  ['/enrollments', {
-    data: [{ relationships: { learningObject: { data: { id: 'course:1', type: 'learningObject' } } }, attributes: { progressPercent: 40, state: 'STARTED', dateStarted: '2026-01-01' } }],
-    included: [{ id: 'course:1', type: 'learningObject', attributes: { loType: 'course', localizedMetadata: [{ locale: 'en-US', name: 'JS' }] } }]
-  }],
-  ['relatedLOs', { data: [] }],
-  ['filter.skillName', { data: [] }],
-  ['/user', { data: { id: 'alm-u', attributes: { roles: ['Learner'] } } }]
-]
-
-const params = (overrides = {}) => ({
-  __ow_headers: { authorization: 'Bearer t' },
-  PL_API_BASE: 'https://alm.example.com',
-  PL_API_KEY: 'k',
-  ...overrides
-})
-
 describe('compose-plan endpoint', () => {
   beforeEach(() => jest.restoreAllMocks())
 
-  it('returns { meta, layout } only — no blocksData', async () => {
-    global.fetch = mockFetchRouter(HAPPY_ROUTES)
-
-    const result = await main(params())
-
-    expect(result.statusCode).toBe(200)
-    expect(Object.keys(result.body)).toEqual(['meta', 'layout'])
-    expect(result.body).not.toHaveProperty('blocksData')
-    expect(result.body.meta.mode).toBe('continue') // one STARTED course
-    const todaysPlan = result.body.layout.blocks.find(b => b.id === 'pl-todays-plan')
-    expect(todaysPlan).toMatchObject({ show: true, order: 1, emphasis: true })
-    // every block is a decision, not content
-    for (const b of result.body.layout.blocks) expect(b).not.toHaveProperty('items')
-  })
-
-  it('CORS preflight returns 204 with CORS headers', async () => {
-    const result = await main({ __ow_method: 'OPTIONS' })
-    expect(result.statusCode).toBe(204)
-    expect(result.headers['Access-Control-Allow-Origin']).toBeDefined()
-  })
-
-  it('missing token -> 401 (no data fetched)', async () => {
+  it('keeps the public endpoint unavailable and never fetches account data', async () => {
     global.fetch = jest.fn()
-    const result = await main({ __ow_headers: {} })
-    expect(result.statusCode).toBe(401)
+
+    const result = await main({
+      __ow_method: 'GET',
+      PL_API_BASE: 'https://alm.example.com'
+    })
+
+    expect(result.statusCode).toBe(503)
+    expect(result.body).toEqual({
+      error: 'Endpoint unavailable until an approved access-control mechanism is configured'
+    })
+    expect(result.headers['Cache-Control']).toBe('private, no-store')
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
-  it('SKIP_IMS_AUTH=true bypasses the IMS gate entirely (dev-only)', async () => {
-    global.fetch = mockFetchRouter(HAPPY_ROUTES)
-
-    const result = await main(params({ __ow_headers: {}, SKIP_IMS_AUTH: true })) // no auth header at all
-
-    expect(result.statusCode).toBe(200)
-    expect(result.body.meta.mode).toBe('continue')
-    // IMS was never called — only ALM routes were hit.
-    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('ims-na1.adobelogin.com'), expect.anything())
+  it('CORS preflight returns 204 with CORS headers', async () => {
+    const result = await main({
+      __ow_method: 'OPTIONS',
+      __ow_headers: { origin: 'https://hub.example.com' },
+      CORS_ORIGIN: 'https://hub.example.com'
+    })
+    expect(result.statusCode).toBe(204)
+    expect(result.headers['Access-Control-Allow-Origin']).toBe('https://hub.example.com')
+    expect(result.headers['Cache-Control']).toBe('private, no-store')
+    expect(result.headers.Vary).toBe('Origin')
   })
 
-  it('SKIP_IMS_AUTH is off by default — a request with no token still 401s', async () => {
+  it('does not make the endpoint available based on caller-supplied authorization', async () => {
     global.fetch = jest.fn()
-    const result = await main(params({ __ow_headers: {}, SKIP_IMS_AUTH: undefined }))
-    expect(result.statusCode).toBe(401)
+    const result = await main({
+      __ow_method: 'GET',
+      __ow_headers: { authorization: 'untrusted-caller-credential' },
+      PL_API_BASE: 'https://alm.example.com'
+    })
+    expect(result.statusCode).toBe(503)
+    expect(global.fetch).not.toHaveBeenCalled()
   })
 
-  it('pipeline failure after auth -> 200 safe default (pl-todays-plan shown, others hidden, no blocksData)', async () => {
-    global.fetch = mockFetchRouter([
-      ['ims-na1.adobelogin.com', { userId: 'ims-u' }],
-      ['/user', {}, 500] // ALM /user fails -> fetchLearnerState throws -> safe default
-    ])
+  it.each([undefined, '*', 'https://other.example.com'])('does not allow an unconfigured origin (%s)', async (configured) => {
+    const result = await main({
+      __ow_method: 'OPTIONS',
+      __ow_headers: { origin: 'https://hub.example.com' },
+      CORS_ORIGIN: configured
+    })
+    expect(result.headers).not.toHaveProperty('Access-Control-Allow-Origin')
+  })
 
-    const result = await main(params())
-
-    expect(result.statusCode).toBe(200)
-    expect(result.body).not.toHaveProperty('blocksData')
-    expect(result.body.meta.mode).toBe('learn')
-    const byId = Object.fromEntries(result.body.layout.blocks.map(b => [b.id, b]))
-    expect(byId['pl-todays-plan']).toMatchObject({ show: true, order: 1 })
-    expect(byId['pl-cohort-readiness'].show).toBe(false)
+  it('returns no data for unsupported methods', async () => {
+    const result = await main({ __ow_method: 'POST' })
+    expect(result.statusCode).toBe(405)
+    expect(result.body).toEqual({ error: 'Method not allowed' })
   })
 })

@@ -76,7 +76,7 @@ function rank (ctx, catalog = {}, { perTier = 5, limit = 20 } = {}) {
 
   // continue — courses actively in progress; closer to done ranks higher.
   for (const c of ctx.progress?.byCourse || []) {
-    if (c.state === 'STARTED' && c.progressPercent < 100) {
+    if (!completed.has(c.loId) && c.state === 'STARTED' && c.progressPercent > 0 && c.progressPercent < 100) {
       byTier.continue.push({
         loId: c.loId, title: c.title, type: 'course', tier: 'continue',
         reason: `${c.progressPercent}% complete`, score: 100 - c.progressPercent

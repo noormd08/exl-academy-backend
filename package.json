@@ -15,12 +15,13 @@
     "typescript": "^5.5.4"
   },
   "scripts": {
+    "start:alm": "node -r dotenv/config scripts/local-demo-server.js",
     "test": "jest --passWithNoTests ./test",
     "e2e": "jest --collectCoverage=false --testRegex ./e2e",
     "lint": "eslint --ignore-pattern web-src --no-error-on-unmatched-pattern test src actions",
     "lint:fix": "npm run lint -- --fix",
-    "check:learner-context": "node scripts/live-learner-context-check.js",
     "check:api": "node scripts/live-api-check.js",
+    "check:catalog": "node scripts/live-catalog-check.js",
     "check:retrieval": "node scripts/live-retrieval-check.js",
     "check:compose-plan": "node scripts/live-compose-plan-check.js"
   }

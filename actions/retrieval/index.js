@@ -10,7 +10,7 @@ governing permissions and limitations under the License.
 */
 
 const { Core } = require('@adobe/aio-sdk')
-const { almClient } = require('../shared/alm')
+const { almClient, AlmError, almErrorResponse } = require('../shared/alm')
 const { rank } = require('./rank')
 
 // layer 3: rank catalog candidates from learner-context (+ catalog).
@@ -31,20 +31,33 @@ async function main (params) {
 
   let catalog = { bySkill: [], related: [] }
   try {
-    const alm = almClient({ apiBase: params.PL_API_BASE, apiKey: params.PL_API_KEY })
+    const alm = almClient()
+    const user = await alm.getUser()
+    if (ctx.profile.userId !== user.data.id) {
+      throw new AlmError('ALM_IDENTITY_MISMATCH', 'Learning context does not belong to the configured ALM learner', 403)
+    }
+    const catalogFailure = error => {
+      if (error instanceof AlmError && [401, 403, 503].includes(error.statusCode)) throw error
+      logger.error('ALM catalog request failed; this discovery source is unavailable')
+      return []
+    }
     const skillNames = (ctx.profile.skillLevels || []).map(s => s.skillName).filter(Boolean)
     // Seed the "related" tier from a few recent courses; capped to keep the relatedLOs fan-out small.
     const seedLoIds = (ctx.progress?.byCourse || []).map(c => c.loId).slice(0, 3)
 
     const [bySkillLists, relatedLists] = await Promise.all([
       Promise.all(skillNames.map(name =>
-        alm.getLearningObjectsBySkill(name).then(r => r.data || []).catch(() => []))),
+        alm.getLearningObjectsBySkill(name).then(r => r.data || []).catch(catalogFailure))),
       Promise.all(seedLoIds.map(loId =>
-        alm.getRelatedLOs(loId).then(r => r.data || []).catch(() => [])))
+        alm.getRelatedLOs(loId).then(r => r.data || []).catch(catalogFailure)))
     ])
     catalog = { bySkill: bySkillLists.flat(), related: relatedLists.flat() }
   } catch (err) {
-    logger.error(`catalog fetch failed, ranking continue/cohort-prep tiers only: ${err.message}`)
+    if (err instanceof AlmError) {
+      logger.error(err.code)
+      return almErrorResponse(err)
+    }
+    logger.error('Catalog fetch failed; ranking continue/cohort-prep tiers only')
   }
 
   return { statusCode: 200, body: rank(ctx, catalog) }

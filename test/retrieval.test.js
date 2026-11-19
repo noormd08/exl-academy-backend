@@ -56,6 +56,28 @@ describe('rank (pure)', () => {
     ])
   })
 
+  it('orders multiple active courses by completion and excludes stale completed or zero-progress entries', () => {
+    const context = {
+      ...ctx,
+      progress: {
+        ...ctx.progress,
+        completedIds: [...ctx.progress.completedIds],
+        byCourse: [
+          { loId: 'course:low', state: 'STARTED', progressPercent: 20 },
+          { loId: 'course:high', state: 'STARTED', progressPercent: 80 },
+          { loId: 'course:middle', state: 'STARTED', progressPercent: 60 },
+          { loId: 'course:zero', state: 'STARTED', progressPercent: 0 },
+          { loId: 'course:done', state: 'STARTED', progressPercent: 90 }
+        ]
+      }
+    }
+    expect(rank(context).candidates.filter(c => c.tier === 'continue').map(c => c.loId))
+      .toEqual(['course:high', 'course:middle', 'course:low'])
+    context.progress.completedIds.push('course:high')
+    expect(rank(context).candidates.filter(c => c.tier === 'continue').map(c => c.loId))
+      .toEqual(['course:middle', 'course:low'])
+  })
+
   it('cohort-prep tier: OPEN cohorts as units with an accurate prep rollup; completed cohort excluded', () => {
     const { candidates } = rank(ctx, catalog)
     const prep = candidates.filter(c => c.tier === 'cohort-prep')
@@ -133,17 +155,25 @@ describe('rank (pure)', () => {
 })
 
 describe('retrieval action', () => {
-  beforeEach(() => jest.restoreAllMocks())
+  const originalToken = process.env.ALM_ACCESS_TOKEN
+  const originalBase = process.env.ALM_API_BASE_URL
+  beforeEach(() => {
+    jest.restoreAllMocks()
+    delete process.env.ALM_ACCESS_TOKEN
+  })
+  afterEach(() => {
+    if (originalToken === undefined) delete process.env.ALM_ACCESS_TOKEN
+    else process.env.ALM_ACCESS_TOKEN = originalToken
+    if (originalBase === undefined) delete process.env.ALM_API_BASE_URL
+    else process.env.ALM_API_BASE_URL = originalBase
+  })
 
-  it('degrades to continue + cohort-prep when no ALM creds (catalog fetch throws)', async () => {
+  it('reports missing credentials instead of substituting ranked content', async () => {
     global.fetch = jest.fn()
-    const result = await main({ ...ctx }) // no PL_API_BASE -> almClient throws -> caught
+    const result = await main({ ...ctx })
 
-    expect(result.statusCode).toBe(200)
-    const tiers = new Set(result.body.candidates.map(c => c.tier))
-    expect(tiers.has('continue')).toBe(true)
-    expect(tiers.has('cohort-prep')).toBe(true)
-    expect(tiers.has('skill-next')).toBe(false)
+    expect(result.statusCode).toBe(503)
+    expect(result.body.code).toBe('ALM_NOT_CONFIGURED')
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
@@ -152,19 +182,45 @@ describe('retrieval action', () => {
     expect(result.body).toEqual({ candidates: [], cohorts: [] })
   })
 
-  it('fetches catalog and includes skill-next + related tiers when creds are present', async () => {
-    global.fetch = jest.fn((url) => {
-      const body = url.includes('filter.skillName') ? { data: catalog.bySkill }
-        : url.includes('relatedLOs') ? { data: catalog.related }
-          : { data: [] }
-      return Promise.resolve({ ok: true, status: 200, json: async () => body })
+  it('rejects learning context belonging to a different learner', async () => {
+    process.env.ALM_ACCESS_TOKEN = 'synthetic-server-token'
+    process.env.ALM_API_BASE_URL = 'https://alm.example.com/primeapi/v2'
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          id: 'another-learner',
+          attributes: { roles: ['Learner'] },
+          relationships: { account: { data: { id: 'account-1' } } }
+        }
+      })
     })
-
-    const result = await main({ ...ctx, PL_API_BASE: 'https://alm.example.com', PL_API_KEY: 'k' })
-
-    expect(result.statusCode).toBe(200)
-    const tiers = new Set(result.body.candidates.map(c => c.tier))
-    expect(tiers.has('skill-next')).toBe(true)
-    expect(tiers.has('related')).toBe(true)
+    const result = await main({ ...ctx })
+    expect(result.statusCode).toBe(403)
+    expect(result.body.code).toBe('ALM_IDENTITY_MISMATCH')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
   })
+
+  it('does not silently degrade when catalog access is forbidden', async () => {
+    process.env.ALM_ACCESS_TOKEN = 'synthetic-server-token'
+    process.env.ALM_API_BASE_URL = 'https://alm.example.com/primeapi/v2'
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            id: 'u1',
+            attributes: { roles: ['Learner'] },
+            relationships: { account: { data: { id: 'account-1' } } }
+          }
+        })
+      })
+      .mockResolvedValue({ ok: false, status: 403 })
+    const result = await main({ ...ctx })
+    expect(result.statusCode).toBe(403)
+    expect(result.body.code).toBe('ALM_FORBIDDEN')
+  })
+
 })

@@ -10,39 +10,23 @@ governing permissions and limitations under the License.
 */
 
 const { Core } = require('@adobe/aio-sdk')
-const { validateImsToken, extractBearerToken, ImsError } = require('./ims')
 const { fetchLearnerState } = require('./api')
 const { normalizeLearnerContext, degradedContext } = require('./normalize')
+const { AlmError, almErrorResponse } = require('../shared/alm')
 
-// layer 2: validate IMS, fetch + normalize learner facts. No LLM, no ranking, no `goal` (out of scope).
-async function main (params) {
+// Internal-only action: use the manually configured ALM token owner's identity.
+async function main (params, loadLearnerState = fetchLearnerState) {
   const logger = Core.Logger('learner-context', { level: params.LOG_LEVEL || 'info' })
-  const headers = params.__ow_headers || {}
-
-  const token = extractBearerToken(headers)
-
-  let userId
   try {
-    const profile = await validateImsToken(token)
-    userId = profile.userId
-  } catch (err) {
-    if (err instanceof ImsError && err.kind === 'unreachable') {
-      logger.error(`IMS unreachable: ${err.message}`)
-      return { statusCode: 502, body: { error: 'IMS profile service unreachable' } }
-    }
-    logger.info(`IMS auth rejected: ${err.message}`)
-    return { statusCode: 401, body: { error: 'Missing or invalid IMS access token' } }
-  }
-
-  try {
-    const raw = await fetchLearnerState(userId, {
-      apiBase: params.PL_API_BASE,
-      apiKey: params.PL_API_KEY
-    })
+    const raw = await loadLearnerState()
     return { statusCode: 200, body: normalizeLearnerContext(raw) }
   } catch (err) {
-    logger.error(`Premium Learning lookup failed, returning degraded context: ${err.message}`)
-    return { statusCode: 200, body: degradedContext(userId) }
+    if (err instanceof AlmError) {
+      logger.error(err.code)
+      return almErrorResponse(err)
+    }
+    logger.error('ALM lookup failed, returning degraded context')
+    return { statusCode: 200, body: degradedContext() }
   }
 }
 

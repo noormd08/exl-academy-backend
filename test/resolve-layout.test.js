@@ -89,6 +89,20 @@ describe('resolveLayout — decisions only (no block content)', () => {
     expect(blockById(result, 'pl-todays-plan').show).toBe(true)
   })
 
+  it.each(['context', 'retrieval'])('does not surface a completed cohort flagged by %s', (source) => {
+    const context = {
+      progress: { completedIds: source === 'context' ? ['lp:done'] : [] },
+      cohorts: [{ id: 'lp:done', sessionDate: '2099-01-01T00:00:00Z', startsInDays: 2 }]
+    }
+    const retrieval = {
+      candidates: [],
+      cohorts: [{ id: 'lp:done', status: source === 'retrieval' ? 'completed' : 'open', prep: { total: 2, completed: 0 } }]
+    }
+    const result = resolveLayout(context, retrieval)
+    expect(result.meta.mode).toBe('learn')
+    expect(blockById(result, 'pl-cohort-readiness').show).toBe(false)
+  })
+
   it('empty / degraded context: learn mode, nothing forced on, no blocksData', () => {
     const result = resolveLayout({ profile: {}, progress: null, cohorts: [], contextDegraded: true }, { candidates: [], cohorts: [] })
 

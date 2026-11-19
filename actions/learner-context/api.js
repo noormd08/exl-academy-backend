@@ -12,22 +12,18 @@ governing permissions and limitations under the License.
 const { almClient } = require('../shared/alm')
 
 // Fetches the ALM data learner-context needs and returns it as one bundle. ALM endpoint/auth details
-// live in ../shared/alm.js (golden rule #5); this only orchestrates the calls.
+// live in ../shared/alm.js. This configured credential reads only its own account's data.
 //
-// Limitation: every per-user ALM call is scoped to whoever PL_API_KEY belongs to — a fixed key can
-// only serve its own owner's data, not an arbitrary learner. `userId` (the IMS identity) is therefore
-// unused today, but kept in the signature for when that's resolved. See CONTEXT.md "Blocking dependency".
-async function fetchLearnerState (userId, { apiBase, apiKey, fetchImpl = fetch } = {}) {
-  const alm = almClient({ apiBase, apiKey, fetchImpl })
+// ALM_ACCESS_TOKEN identifies one configured learner, not the browser visitor.
+async function fetchLearnerState ({ fetchImpl = fetch } = {}) {
+  const alm = almClient({ fetchImpl })
 
-  // /user must run first: its id (not the passed-in userId) is the ALM identity the other calls scope to.
+  // /user identifies the account owner whose data this configured token can access.
   const user = await alm.getUser()
-  const almUserId = user.data.id
-
   const [enrollments, badges, userSkills] = await Promise.all([
     alm.getEnrollments(),
-    alm.getUserBadges(almUserId), // for achievements.earned
-    alm.getUserSkills(almUserId)  // for profile.skillLevels
+    alm.getUserBadges(), // for achievements.earned
+    alm.getUserSkills()  // for profile.skillLevels
   ])
 
   return { user, enrollments, badges, userSkills }

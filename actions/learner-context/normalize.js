@@ -20,7 +20,9 @@ governing permissions and limitations under the License.
 
 function daysUntil (dateString, now) {
   if (!dateString) return null
-  return Math.ceil((new Date(dateString).getTime() - now) / (1000 * 60 * 60 * 24))
+  const days = (new Date(dateString).getTime() - now) / (1000 * 60 * 60 * 24)
+  if (!Number.isFinite(days)) return null
+  return days < 0 ? Math.floor(days) : Math.ceil(days)
 }
 
 // Resolves a JSON:API relationship ref ({ id, type }) against an `included` array.
@@ -45,7 +47,7 @@ function mapEnrollment (enrollment, included) {
     title: lo ? localizedName(lo.attributes) : undefined,
     type: lo?.attributes.loType,
     progressPercent: attrs.progressPercent,
-    state: attrs.state, // ALM learnerState: enrolled | started | completed
+    state: String(attrs.state || '').toUpperCase(), // ENROLLED | STARTED | COMPLETED
     // ALM has no true "last accessed" field; dateStarted is the closest proxy.
     lastAccessDate: attrs.dateStarted || attrs.dateEnrolled || null,
     completionDeadline: attrs.completionDeadline || null,
@@ -124,8 +126,8 @@ function mapSkillLevels (userSkillsResponse) {
   return [...bestBySkillId.values()].sort((a, b) => (b.pointsEarned || 0) - (a.pointsEarned || 0))
 }
 
-function toProgressEntry ({ loId, title, progressPercent, state, lastAccessDate }) {
-  return { loId, title, progressPercent, state, lastAccessDate }
+function toProgressEntry ({ loId, title, progressPercent, state, lastAccessDate, completionDeadline }) {
+  return { loId, title, progressPercent, state, lastAccessDate, dueDate: completionDeadline }
 }
 
 function normalizeLearnerContext ({ user, enrollments, badges, userSkills }, { now = Date.now() } = {}) {
@@ -161,9 +163,9 @@ function normalizeLearnerContext ({ user, enrollments, badges, userSkills }, { n
 }
 
 // Minimal valid output when ALM is unreachable, so the sequence keeps running (golden rule #2).
-function degradedContext (userId) {
+function degradedContext () {
   return {
-    profile: { userId, roles: [], skillLevels: [] },
+    profile: { userId: null, roles: [], skillLevels: [] },
     progress: null,
     cohorts: [],
     enrollments: [],

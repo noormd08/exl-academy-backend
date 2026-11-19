@@ -10,9 +10,7 @@ governing permissions and limitations under the License.
 */
 
 // Manual, local-only check of the full decision chain: learner-context -> retrieval -> resolveLayout,
-// using the ALM token (PL_API_KEY) from .env. Bypasses IMS on purpose — IMS only identifies the
-// learner, it isn't needed to exercise the data/layout logic (compose-plan's IMS gate is covered by
-// the unit/HTTP tests). Whatever account PL_API_KEY belongs to is the learner shown here.
+// using ALM_ACCESS_TOKEN from .env. Results belong to the configured ALM account owner.
 //
 // Usage: npm run check:compose-plan
 
@@ -23,24 +21,12 @@ const { main: retrievalAction } = require('../actions/retrieval')
 const { resolveLayout } = require('../actions/compose-plan/resolve-layout')
 
 async function run () {
-  if (!process.env.PL_API_BASE || !process.env.PL_API_KEY) {
-    console.error('Set PL_API_BASE and PL_API_KEY in .env first.')
-    process.exit(1)
-  }
-
-  const alm = { apiBase: process.env.PL_API_BASE, apiKey: process.env.PL_API_KEY }
-
-  const context = normalizeLearnerContext(await fetchLearnerState('bypass-ims', alm))
-  const retrieval = (await retrievalAction({ ...context, LOG_LEVEL: 'error', ...renameCreds(alm) })).body
+  const context = normalizeLearnerContext(await fetchLearnerState())
+  const retrieval = (await retrievalAction({ ...context, LOG_LEVEL: 'error' })).body
   const plan = resolveLayout(context, retrieval)
 
-  console.log('=== compose-plan output (meta + layout + blocksData) ===')
+  console.log('=== local decision output (meta + layout) ===')
   console.log(JSON.stringify(plan, null, 2))
-}
-
-// retrieval reads PL creds from params under the PL_API_* names.
-function renameCreds ({ apiBase, apiKey }) {
-  return { PL_API_BASE: apiBase, PL_API_KEY: apiKey }
 }
 
 run().catch(err => {

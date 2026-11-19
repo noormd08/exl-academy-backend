@@ -10,7 +10,7 @@ governing permissions and limitations under the License.
 */
 
 // Manual, local-only check of the real chain: fetch + normalize learner-context from live ALM, then
-// run retrieval over it (which makes its own live catalog calls). Bypasses IMS. Usage: npm run check:retrieval
+// run retrieval over it (which makes its own live catalog calls). Usage: npm run check:retrieval
 
 require('dotenv').config()
 const { fetchLearnerState } = require('../actions/learner-context/api')
@@ -18,22 +18,12 @@ const { normalizeLearnerContext } = require('../actions/learner-context/normaliz
 const { main } = require('../actions/retrieval')
 
 async function run () {
-  if (!process.env.PL_API_BASE || !process.env.PL_API_KEY) {
-    console.error('Set PL_API_BASE and PL_API_KEY in .env first.')
-    process.exit(1)
-  }
-
-  const raw = await fetchLearnerState('unused-ims-id', {
-    apiBase: process.env.PL_API_BASE,
-    apiKey: process.env.PL_API_KEY
-  })
+  const raw = await fetchLearnerState()
   const ctx = normalizeLearnerContext(raw)
 
   const result = await main({
     ...ctx,
-    LOG_LEVEL: 'error',
-    PL_API_BASE: process.env.PL_API_BASE,
-    PL_API_KEY: process.env.PL_API_KEY
+    LOG_LEVEL: 'error'
   })
 
   console.log('=== retrieval output ===')

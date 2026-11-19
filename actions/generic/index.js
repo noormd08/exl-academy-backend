@@ -14,7 +14,7 @@ const { Core } = require('@adobe/aio-sdk')
 // main function that will be executed by Adobe I/O Runtime
 async function main (params) {
   const logger = Core.Logger('main', { level: params.LOG_LEVEL || 'info' })
-  logger.info(params)
+  logger.info('premium-learning generic action executed')
 
   return {
     statusCode: 200,

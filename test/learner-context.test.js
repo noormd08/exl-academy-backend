@@ -11,6 +11,7 @@ governing permissions and limitations under the License.
 
 const { main } = require('../actions/learner-context')
 const { normalizeLearnerContext, degradedContext } = require('../actions/learner-context/normalize')
+const { fetchEnrollmentPages } = require('../actions/shared/alm')
 
 // Small literal ALM-shaped fixtures for testing the pure transform logic in normalize.js. This is
 // synthetic test input, not a real capture and not a persona — learner-context always calls the real
@@ -111,23 +112,6 @@ const literalBundle = {
   userSkills: literalUserSkills
 }
 
-function paramsFor (userId, overrides = {}) {
-  return {
-    __ow_headers: { authorization: `Bearer token-for-${userId}` },
-    ...overrides
-  }
-}
-
-// Routes checked in order — put more specific substrings (e.g. "userBadges") before shorter ones
-// they'd otherwise also match (e.g. "/user").
-function mockFetchRouter (routes) {
-  return jest.fn((url) => {
-    const match = routes.find(([pattern]) => url.includes(pattern))
-    if (!match) throw new Error(`Unexpected fetch: ${url}`)
-    return Promise.resolve({ ok: true, status: 200, json: async () => match[1] })
-  })
-}
-
 describe('normalizeLearnerContext (pure transform)', () => {
   const now = new Date('2026-02-05T00:00:00Z').getTime()
 
@@ -150,11 +134,11 @@ describe('normalizeLearnerContext (pure transform)', () => {
     const result = normalizeLearnerContext(literalBundle, { now })
 
     expect(result.progress.byCourse).toEqual([
-      { loId: 'course:111', title: 'Course 111', progressPercent: 100, state: 'COMPLETED', lastAccessDate: '2026-01-01T00:00:00Z' }
+      { loId: 'course:111', title: 'Course 111', progressPercent: 100, state: 'COMPLETED', lastAccessDate: '2026-01-01T00:00:00Z', dueDate: null }
     ])
     expect(result.progress.byLearningProgram).toEqual([
-      { loId: 'learningProgram:222', title: 'Cohort 222', progressPercent: 40, state: 'STARTED', lastAccessDate: '2026-02-01T00:00:00Z' },
-      { loId: 'learningProgram:444', title: 'Cohort 444', progressPercent: 100, state: 'COMPLETED', lastAccessDate: '2026-01-15T00:00:00Z' }
+      { loId: 'learningProgram:222', title: 'Cohort 222', progressPercent: 40, state: 'STARTED', lastAccessDate: '2026-02-01T00:00:00Z', dueDate: '2026-03-01T00:00:00Z' },
+      { loId: 'learningProgram:444', title: 'Cohort 444', progressPercent: 100, state: 'COMPLETED', lastAccessDate: '2026-01-15T00:00:00Z', dueDate: null }
     ])
   })
 
@@ -193,6 +177,21 @@ describe('normalizeLearnerContext (pure transform)', () => {
     expect(result.achievements).toEqual({ earned: ['ROCKSTAR', 'NINJA', 'GURU'], next: null })
   })
 
+  it.each([
+    ['2026-02-04T23:59:00Z', -1],
+    ['2026-02-05T00:01:00Z', 1],
+    ['invalid-date', null]
+  ])('does not treat a past or invalid session as upcoming (%s)', (date, expectedDays) => {
+    const enrollments = {
+      ...literalEnrollments,
+      included: literalEnrollments.included.map(item => item.id === 'learningProgram:222_i1'
+        ? { ...item, attributes: { startDate: date } }
+        : item)
+    }
+    const result = normalizeLearnerContext({ ...literalBundle, enrollments }, { now })
+    expect(result.cohorts[0].startsInDays).toBe(expectedDays)
+  })
+
   it('carries roles, and skills from userSkills (highest level per skill, with pointsEarned)', () => {
     const result = normalizeLearnerContext(literalBundle, { now })
 
@@ -204,9 +203,53 @@ describe('normalizeLearnerContext (pure transform)', () => {
     ])
   })
 
+  describe('enrollment pagination', () => {
+    const apiBase = 'https://alm.example.com/primeapi/v2'
+
+    it('includes completion and learning-object relationships from later pages', async () => {
+      const get = jest.fn()
+        .mockResolvedValueOnce({
+          data: [literalEnrollments.data[1]],
+          included: [literalEnrollments.included[1], literalEnrollments.included[3]],
+          links: { next: `${apiBase}/enrollments?page[cursor]=next` }
+        })
+        .mockResolvedValueOnce({
+          data: [literalEnrollments.data[0]],
+          included: [literalEnrollments.included[0]]
+        })
+      const enrollments = await fetchEnrollmentPages(apiBase, get)
+      const context = normalizeLearnerContext({ ...literalBundle, enrollments })
+      expect(context.progress.completedIds).toEqual(['course:111'])
+      expect(context.cohorts).toHaveLength(1)
+      expect(get).toHaveBeenCalledTimes(2)
+    })
+
+    it.each([
+      'https://other.example.com/primeapi/v2/enrollments?page=2',
+      '/primeapi/v2/user',
+      'https://user:password@alm.example.com/primeapi/v2/enrollments?page=2'
+    ])('rejects pagination outside the approved enrollment endpoint', async (next) => {
+      const get = jest.fn().mockResolvedValue({ data: [], links: { next } })
+      await expect(fetchEnrollmentPages(apiBase, get))
+        .rejects.toThrow('pagination URL is not allowed')
+      expect(get).toHaveBeenCalledTimes(1)
+    })
+
+    it('rejects cycles and failed later pages rather than silently returning partial learner data', async () => {
+      const get = jest.fn().mockResolvedValue({ data: [], links: { next: '?page=2' } })
+      await expect(fetchEnrollmentPages(apiBase, get)).rejects.toThrow('pagination cycle')
+      expect(get).toHaveBeenCalledTimes(2)
+
+      const failingGet = jest.fn()
+        .mockResolvedValueOnce({ data: [], links: { next: '?page=2' } })
+        .mockRejectedValueOnce(new Error('ALM /enrollments returned 503'))
+      await expect(fetchEnrollmentPages(apiBase, failingGet)).rejects.toThrow('returned 503')
+    })
+  })
+
   it('degradedContext returns the minimal shape with contextDegraded:true', () => {
-    expect(degradedContext('u1')).toEqual({
-      profile: { userId: 'u1', roles: [], skillLevels: [] },
+    expect(degradedContext()).toEqual({
+      profile: { userId: null, roles: [], skillLevels: [] },
       progress: null,
       cohorts: [],
       enrollments: [],
@@ -216,63 +259,47 @@ describe('normalizeLearnerContext (pure transform)', () => {
   })
 })
 
-describe('learner-context action (auth + real ALM call + degrade paths)', () => {
+describe('internal learner-context action (configured ALM account + degrade paths)', () => {
+  const originalToken = process.env.ALM_ACCESS_TOKEN
   beforeEach(() => {
     jest.restoreAllMocks()
+    delete process.env.ALM_ACCESS_TOKEN
   })
 
-  it('returns 401 when the Authorization header is missing', async () => {
+  afterEach(() => {
+    if (originalToken === undefined) delete process.env.ALM_ACCESS_TOKEN
+    else process.env.ALM_ACCESS_TOKEN = originalToken
+  })
+
+  it('returns an explicit configuration error when the ALM credential is unavailable', async () => {
     global.fetch = jest.fn()
+    const result = await main({})
 
-    const result = await main({ __ow_headers: {} })
-
-    expect(result.statusCode).toBe(401)
+    expect(result.statusCode).toBe(503)
+    expect(result.body.code).toBe('ALM_NOT_CONFIGURED')
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
-  it('returns 401 when the IMS token is invalid', async () => {
-    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 })
-
-    const result = await main(paramsFor('learner-1'))
-
-    expect(result.statusCode).toBe(401)
-  })
-
-  it('returns 502 when IMS is unreachable', async () => {
-    global.fetch = jest.fn().mockRejectedValue(new Error('network down'))
-
-    const result = await main(paramsFor('learner-1'))
-
-    expect(result.statusCode).toBe(502)
-  })
-
-  it('returns a degraded context (not a throw) when PL_API_BASE is not configured', async () => {
-    global.fetch = mockFetchRouter([['ims-na1.adobelogin.com', { userId: 'learner-1' }]])
-
-    const result = await main(paramsFor('learner-1', { PL_API_BASE: '' }))
+  it('normalizes the configured account data without reading caller identity', async () => {
+    global.fetch = jest.fn()
+    const loadLearnerState = jest.fn().mockResolvedValue(literalBundle)
+    const result = await main({}, loadLearnerState)
 
     expect(result.statusCode).toBe(200)
-    expect(result.body).toEqual(degradedContext('learner-1'))
-  })
-
-  it('returns the normalized context end-to-end against a routed real-shaped ALM call', async () => {
-    global.fetch = mockFetchRouter([
-      ['ims-na1.adobelogin.com', { userId: 'ims-user-1' }],
-      ['userBadges', literalBadges],   // check /users/{id}/userBadges and /userSkills before the
-      ['userSkills', literalUserSkills], // general '/user' route (a substring of '/users/...')
-      ['/enrollments', literalEnrollments],
-      ['/user', literalUser]
-    ])
-
-    const result = await main(paramsFor('ims-user-1', { PL_API_BASE: 'https://alm.example.com', PL_API_KEY: 'k' }))
-
-    expect(result.statusCode).toBe(200)
-    // GET /user is what actually drives the ALM identity (see api.js) — not the IMS userId.
     expect(result.body.profile.userId).toBe('u1')
-    expect(result.body.cohorts.map(c => c.id)).toEqual(['learningProgram:222', 'learningProgram:444'])
-    expect(result.body.profile.skillLevels).toEqual([
-      { skillId: 's1', skillName: 'JavaScript', level: '2', levelName: 'Level 2', pointsEarned: 250 },
-      { skillId: 's2', skillName: 'Python', level: '1', levelName: 'Level 1', pointsEarned: 40 }
+    expect(result.body.cohorts.map(cohort => cohort.id)).toEqual([
+      'learningProgram:222', 'learningProgram:444'
     ])
+    expect(loadLearnerState).toHaveBeenCalledWith()
+  })
+
+  it('degrades safely when ALM fails without exposing upstream error details', async () => {
+    global.fetch = jest.fn()
+    const loadLearnerState = jest.fn().mockRejectedValue(new Error('synthetic upstream failure'))
+    const result = await main({}, loadLearnerState)
+    expect(result.statusCode).toBe(200)
+    expect(result.body).toEqual(degradedContext())
+    expect(global.fetch).not.toHaveBeenCalled()
+    expect(JSON.stringify(result)).not.toMatch(/upstream failure/)
   })
 })

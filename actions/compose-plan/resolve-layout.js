@@ -12,7 +12,7 @@ governing permissions and limitations under the License.
 // Pure, deterministic layout resolver — no LLM, no network. DECISIONS ONLY: given the real outputs of
 // learner-context (`context`) and retrieval (`retrieval`), it decides the display `mode`, and for each
 // block whether to show it, its order, emphasis, and an optional `reason` code. It does NOT build any
-// block content — the EDS frontend blocks fetch their own data directly from ALM.
+// block content. Browser ALM/content requests remain disabled; the local demo composes data separately.
 //
 // Output: { meta: { mode, aiUsed }, layout: { blocks: [ { id, show, order, emphasis, reason? } ] } }
 //
@@ -58,20 +58,24 @@ function candidatesByTier (candidates) {
 
 function resolveLayout (context = {}, retrieval = {}) {
   const progress = context.progress || {}
+  const completed = new Set(progress.completedIds || [])
   const candidates = retrieval.candidates || []
 
   const tiers = candidatesByTier(candidates)
   const continueCandidates = tiers.continue
   const progressItems = [...(progress.byCourse || []), ...(progress.byLearningProgram || [])]
+    .filter(item => !completed.has(item.loId))
   const inProgressItems = progressItems.filter(isInProgress)
 
   // Prep rollups (completed/total) live on retrieval.cohorts, keyed by cohort id.
   const prepById = new Map((retrieval.cohorts || []).map(c => [c.id, c.prep]))
+  const completedCohorts = new Set((retrieval.cohorts || []).filter(c => c.status === 'completed').map(c => c.id))
 
   // Cohorts that are upcoming (future, dated session) AND still have prep to do — nearest session first.
   const upcomingIncompleteCohorts = (context.cohorts || [])
     .map(cohort => ({ cohort, prep: prepById.get(cohort.id) }))
     .filter(({ cohort, prep }) =>
+      !completed.has(cohort.id) && !completedCohorts.has(cohort.id) &&
       cohort.sessionDate != null && cohort.startsInDays != null && cohort.startsInDays >= 0 &&
       prep && prep.completed < prep.total)
     .sort((a, b) => a.cohort.startsInDays - b.cohort.startsInDays)
