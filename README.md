@@ -23,6 +23,43 @@ this is not wired into the frontend or approved as the public content contract. 
 expose ALM data publicly until access control and that contract are approved.
 No LLM, behavior profile, or policy guard is implemented.
 
+The separate local-only synthetic For You demo described below does use an LLM and
+preset behavior. It does not change the closed public action or call ALM.
+
+## Local synthetic For You demo
+
+The demo has three fictional personas and fictional courses. It sends their interests,
+preset activity, progress and the entered query to Gemini; it uses no ALM data or RAG.
+Do not enter sensitive information into its query. It does not authenticate users and
+must not be exposed publicly. It is not a fallback for ALM errors.
+
+Add these values to the existing ignored backend `.env` file:
+
+```dotenv
+GEMINI_API_KEY=<your-google-ai-studio-api-key>
+GEMINI_MODEL=gemini-3.5-flash-lite
+```
+
+```sh
+npm run start:mock-for-you
+```
+
+The server binds to `127.0.0.1:9081`, independently of the ALM server, and needs no ALM
+token. Restart it after changing the environment. The frontend demo uses port 9081;
+the optional `MOCK_FOR_YOU_PORT` server setting requires a matching frontend change.
+See the frontend README for the opt-in page URL. Gemini errors are reported explicitly;
+the service never silently returns mock recommendations when generation fails.
+
+`POST /api/mock-for-you` accepts `{ "personaId": "new-learner", "query": "" }` and
+returns one JSON array: ordered `{ type: "section", index, html }` events, followed
+by `{ type: "suggestions", items }`, a `{ type: "debug", timings, pipeline }`
+summary, and `{ type: "done", title, usedCourses }`. This is not a streamed response.
+The backend fills server-controlled HTML templates with escaped section and course data.
+The frontend validates and decorates the populated markup. Suggestions are included in the
+response but not shown in the UI.
+Debug timing covers generation and response construction; it does not contain prompts,
+API keys or learner data. The debug retrieval label refers to the mock catalog, not RAG.
+
 Run synthetic offline validation without credentials:
 
 ```sh

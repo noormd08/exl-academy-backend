@@ -16,6 +16,7 @@
   },
   "scripts": {
     "start:alm": "node -r dotenv/config scripts/local-demo-server.js",
+    "start:mock-for-you": "node -r dotenv/config scripts/mock-for-you.js",
     "test": "jest --passWithNoTests ./test",
     "e2e": "jest --collectCoverage=false --testRegex ./e2e",
     "lint": "eslint --ignore-pattern web-src --no-error-on-unmatched-pattern test src actions",
